@@ -1,0 +1,8 @@
+logs/
+plugins/
+config/
+.env
+__pycache__/
+*.pyc
+dags/model/*.sav
+.DS_Store
