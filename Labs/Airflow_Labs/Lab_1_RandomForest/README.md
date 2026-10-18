@@ -1,154 +1,129 @@
-# Airflow Lab 1: Diabetes Progression Prediction with a Random Forest
+# Airflow Lab 1: Predicting Diabetes Progression with a Random Forest
 
-## Overview
+## What this lab does
 
-This lab uses Apache Airflow, running in Docker, to orchestrate a small machine learning pipeline. The pipeline trains a Random Forest regressor that predicts how much a patient's diabetes progresses over one year, then evaluates it on patients the model has never seen.
+This lab builds a small machine learning pipeline and runs it with **Apache Airflow**.
 
-The data is the diabetes dataset from scikit-learn: 442 patients with ten baseline measurements (age, sex, BMI, average blood pressure and six blood serum measurements `s1`-`s6`). The target column, `progression`, is a quantitative measure of disease progression one year after baseline.
+The model looks at basic health measurements for a diabetes patient (age, sex, BMI, blood pressure and six blood test results) and predicts how much their disease will progress over the next year. The prediction is a single number called the **progression score**; higher means the disease got worse.
 
-The pipeline is defined as an Airflow DAG named `Airflow_Lab1_RF` with four tasks that run in sequence:
+Instead of running the code as one script, Airflow runs it as four separate steps, one after another. Airflow keeps track of which steps succeeded or failed, shows their output in a web interface, and lets you rerun any step on its own.
 
-```
-load_data_task >> data_preprocessing_task >> build_save_model_task >> load_model_task
-```
+## Key terms
 
-| Task | Function | What it does |
-|---|---|---|
-| `load_data_task` | `load_data()` | Reads `data/file.csv` (376 patients) and passes it on, serialized |
-| `data_preprocessing_task` | `data_preprocessing(data)` | Drops missing values, separates features from the target, splits 80/20 into training and validation sets |
-| `build_save_model_task` | `build_save_model(data, filename)` | Trains a 200-tree Random Forest for each `max_depth` from 1 to 15, records validation RMSE for each, and saves the best model to `model/model.sav` |
-| `load_model_task` | `load_model_evaluate(filename, val_rmse)` | Loads the saved model, reports the best depth, and evaluates it on the 66 held-out patients in `data/test.csv` (RMSE, MAE, R², top features, sample predictions) |
+- **Airflow:** A tool for scheduling and running data pipelines. It runs here inside Docker, so nothing needs to be installed on your computer except Docker.
+- **DAG:** The pipeline definition. This lab's DAG is called `Airflow_Lab1_RF` and is defined in `dags/airflow.py`.
+- **Task:** One step of the pipeline. Each task calls one Python function from `dags/src/lab.py`.
+- **XCom:** How Airflow passes a task's output to the next task.
 
-Tasks pass data to each other through Airflow's XCom. Each payload is pickled and base64-encoded so it can be stored as a plain string.
+## The pipeline
 
-## Project structure
+The four tasks run in this order:
 
 ```
-Airflow_Lab1_RF/
+load_data_task → data_preprocessing_task → build_save_model_task → load_model_task
+```
+
+1. **Load the data** (`load_data`): Reads 376 patient records from `dags/data/file.csv`.
+2. **Prepare the data** (`data_preprocessing`): Removes incomplete rows, separates the measurements from the progression score, and sets aside 20% of the patients as a validation set to compare models fairly.
+3. **Train and save the model** (`build_save_model`): Trains 15 Random Forest models, each allowed to grow trees of a different depth (1 to 15). It checks each one on the validation set and saves the most accurate one as `dags/model/model.sav`.
+4. **Evaluate the model** (`load_model_evaluate`): Loads the saved model and tests it on 66 patients in `dags/data/test.csv` that it has never seen, then reports how accurate it was and which measurements mattered most.
+
+## Folder contents
+
+```
+Lab_1_RandomForest/
 ├── dags/
-│   ├── data/
-│   │   ├── file.csv        # training + validation data
-│   │   └── test.csv        # held-out test patients
-│   ├── model/              # model.sav is written here
+│   ├── airflow.py        # defines the pipeline (DAG) and the order of tasks
 │   ├── src/
 │   │   ├── __init__.py
-│   │   └── lab.py          # pipeline functions
-│   └── airflow.py          # DAG definition
-├── docker-compose.yaml
-├── .env
+│   │   └── lab.py        # the Python code for each of the four steps
+│   ├── data/
+│   │   ├── file.csv      # patients used for training and validation
+│   │   └── test.csv      # patients used only for the final test
+│   └── model/            # the trained model is saved here
+├── docker-compose.yaml   # starts Airflow in Docker (already configured)
 ├── .gitignore
 └── README.md
 ```
 
-`logs/`, `plugins/` and `config/` are created during setup and are not committed.
+`docker-compose.yaml` is already set up for this lab: example DAGs are turned off, `pandas` and `scikit-learn` are installed automatically, and the login is `airflow2` / `airflow2`.
 
-## Prerequisites
+## Before you start
 
-- Docker Desktop, running, with at least 4 GB of memory allocated (8 GB recommended) under Settings → Resources
-- Port 8080 free on your machine
+- Install **Docker Desktop** and open it. Wait until it shows that Docker is running.
+- In Docker Desktop → Settings → Resources, give Docker at least **4 GB** of memory (8 GB is better).
+- Make sure nothing else is using port **8080** (for example, another Airflow lab that is still running).
 
-No Python packages need to be installed locally. Airflow and the pipeline's dependencies run inside the containers.
+## How to run it
 
-## Setup
+All commands are run in a terminal. On Windows, use Git Bash so the same commands work.
 
-Run all commands from the project root (the folder containing `dags/`).
-
-**1. Download the Airflow Docker Compose file**
+**Step 1. Download the repo and go to this lab's folder**
 
 ```bash
-# Mac / Linux
-curl -LfO 'https://airflow.apache.org/docs/apache-airflow/2.9.2/docker-compose.yaml'
-
-# Windows
-curl -o docker-compose.yaml https://airflow.apache.org/docs/apache-airflow/2.9.2/docker-compose.yaml
+git clone https://github.com/NainicaD/MLOps-course.git
+cd MLOps-course/Labs/Airflow_Labs/Lab_1_RandomForest
 ```
 
-**2. Create the folders Airflow needs**
+**Step 2. Create the folders and settings file Airflow needs**
 
 ```bash
-# Mac / Linux
 mkdir -p ./logs ./plugins ./config
-
-# Windows (cmd)
-mkdir logs plugins config
-```
-
-**3. Set the Airflow user**
-
-```bash
-# Mac / Linux
 echo -e "AIRFLOW_UID=$(id -u)" > .env
 ```
 
-On Windows, create a file named `.env` containing:
+On Windows, if the second command fails, create a file named `.env` in this folder containing `AIRFLOW_UID=50000`.
 
-```
-AIRFLOW_UID=50000
-```
-
-**4. Edit `docker-compose.yaml`**
-
-In the `environment` section of `x-airflow-common`:
-
-```yaml
-AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-_PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- pandas scikit-learn}
-```
-
-In the `airflow-init` service, set the login credentials:
-
-```yaml
-_AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow2}
-_AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow2}
-```
-
-## Running the pipeline
-
-**1. Initialize the Airflow database** (first run only; takes a few minutes)
+**Step 3. Set up Airflow** (first time only, takes a few minutes)
 
 ```bash
 docker compose up airflow-init
 ```
 
-Wait for `airflow-init-1 exited with code 0`.
+Wait until the output ends with `airflow-init-1 exited with code 0`.
 
-**2. Start Airflow**
+**Step 4. Start Airflow**
 
 ```bash
 docker compose up
 ```
 
-Leave this terminal running. Airflow is ready when the webserver logs a line containing `GET /health HTTP/1.1" 200`.
+Keep this terminal open; Airflow stops if you close it. Airflow is ready when you see a line containing `GET /health HTTP/1.1" 200`.
 
-**3. Open the UI**
+**Step 5. Open Airflow and run the pipeline**
 
-Go to http://localhost:8080 and log in with `airflow2` / `airflow2`.
+1. Go to http://localhost:8080 and log in with username `airflow2` and password `airflow2`.
+2. Find `Airflow_Lab1_RF` in the list. If it isn't there yet, wait 30 seconds and refresh.
+3. Click the switch on the left of the DAG name to turn it on.
+4. Click the ▶ button on the right to start a run.
 
-**4. Trigger the DAG**
+**Step 6. Stop Airflow when you are done**
 
-Find `Airflow_Lab1_RF` in the DAG list, switch the toggle on, and click ▶ (Trigger DAG).
-
-**5. Stop Airflow when finished**
-
-In a second terminal, from the project root:
+Open a second terminal in the same folder and run:
 
 ```bash
 docker compose down
 ```
 
-## Validating the results in Airflow
+## How to check that it worked
 
-**Check the run succeeded**
+**1. The run finished successfully**
 
-On the DAG list page, a successful run shows a dark green circle under **Runs** and a green circle with **4** under **Recent Tasks**. **Running** and **Failed** at the top of the page should both read 0. A light green circle means the run is still in progress; red means a task failed.
+On the main DAG list, look at the `Airflow_Lab1_RF` row:
 
-**Check each task**
+| What you see | What it means |
+|---|---|
+| Light green circle under **Runs** | Still running; wait a minute |
+| Dark green circle under **Runs**, and **4** in a green circle under **Recent Tasks** | All four tasks succeeded |
+| Red circle | A task failed (see Troubleshooting) |
 
-Click `Airflow_Lab1_RF` → **Graph**. All four task boxes should have a dark green border (success). Click any box → **Logs** to see its output.
+**2. All four steps are green**
 
-**Check model selection**
+Click `Airflow_Lab1_RF`, then the **Graph** tab. All four boxes should have a dark green border.
 
-Open the logs for `build_save_model_task`. You should see the validation RMSE for every depth:
+**3. The model comparison makes sense**
+
+Click the `build_save_model_task` box → **Logs**. You should see one line per tree depth:
 
 ```
 max_depth= 1  validation RMSE=61.16
@@ -158,11 +133,11 @@ max_depth= 4  validation RMSE=54.65
 ...
 ```
 
-Validation error drops sharply up to depth 3 and then slowly rises as deeper trees start to overfit.
+**RMSE** is the typical size of the model's error, in progression-score points; lower is better. The error drops until depth 3 and then slowly rises. Deeper trees start memorizing the training patients instead of learning general patterns (overfitting), so depth 3 is chosen.
 
-**Check the final evaluation**
+**4. The final test results**
 
-Open the logs for `load_model_task`:
+Click the `load_model_task` box → **Logs**:
 
 ```
 Best max_depth (lowest validation RMSE): 3
@@ -170,27 +145,31 @@ Test metrics: {'best_max_depth': 3, 'test_rmse': 56.24, 'test_mae': 45.58, 'test
 Top features: s5 (0.56), bmi (0.26), bp (0.06)
 ```
 
-Exact numbers can vary slightly with the scikit-learn version installed in the container. The target is noisy, so a test R² around 0.3 on 66 patients is expected; `s5` (a blood triglyceride measure) and BMI are the strongest predictors.
+How to read this:
 
-**Check data passed between tasks**
+- **test_rmse (about 56)** and **test_mae (about 46):** On new patients, predictions are typically off by about 45 to 55 points. Progression scores in the data range from roughly 25 to 346.
+- **test_r2 (about 0.31):** The model explains about 31% of the differences in progression between patients. That is modest, which is expected: these ten measurements only partly predict how the disease develops.
+- **Top features:** `s5` (a blood triglyceride measure) and `bmi` drive most of the predictions. The numbers show each feature's share of importance.
 
-Click a task → **XCom**. `build_save_model_task` returns the list of 15 validation RMSE values, and `load_model_task` returns the test metrics dictionary. The earlier tasks return long base64 strings, which are the serialized data.
+Your numbers may differ slightly depending on the scikit-learn version installed in Docker.
 
-**Check the saved model**
+**5. The model file was saved**
 
-After a successful run, `dags/model/model.sav` exists in the project folder. The container writes it directly into this folder through the mounted `dags/` directory.
+In this folder on your computer, `dags/model/model.sav` should now exist.
 
-**Check task timing**
+**Optional checks in the Airflow UI**
 
-The **Gantt** tab shows how long each task took. `build_save_model_task` takes the longest because it trains 15 forests.
+- **Gantt** tab: Shows how long each task took. Training (`build_save_model_task`) is the slowest because it trains 15 models.
+- Click any task → **XCom**: Shows what that task passed to the next one. `build_save_model_task` passes the list of 15 RMSE values, and `load_model_task` returns the final metrics.
 
 ## Troubleshooting
 
-| Problem | Fix |
+| Problem | What to do |
 |---|---|
-| DAG does not appear | Make sure `airflow.py` is directly inside `dags/` (lowercase) and wait about 30 seconds, then refresh |
-| Import error shown at the top of the UI | Click it to read the error; usually a typo in `airflow.py` or `lab.py` |
-| `ModuleNotFoundError: sklearn` | Check the `_PIP_ADDITIONAL_REQUIREMENTS` line, then run `docker compose down` and `docker compose up` |
-| Port 8080 already in use | Change `"8080:8080"` to `"8081:8080"` in `docker-compose.yaml` and use `localhost:8081` |
-| Containers keep restarting | Increase Docker's memory under Settings → Resources |
-| `command not found: docker` | Start Docker Desktop and open a new terminal |
+| `command not found: docker` | Open Docker Desktop, wait for it to start, then open a new terminal |
+| The DAG doesn't appear in the list | Wait 30 seconds and refresh. Check that `airflow.py` is directly inside the `dags` folder |
+| A red error banner appears at the top of the Airflow page | Click it to read the error. It usually points to a typo in `airflow.py` or `lab.py` |
+| `ModuleNotFoundError: sklearn` in a task log | Run `docker compose down`, then `docker compose up` again so the packages reinstall |
+| `port is already allocated` | Another program (often another Airflow lab) is using port 8080. Stop it with `docker compose down` in that folder |
+| Containers keep restarting | Give Docker more memory in Docker Desktop → Settings → Resources |
+| A task is red | Click the task → **Logs**, scroll to the bottom, and read the error message |
