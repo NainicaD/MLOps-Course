@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wine Cultivar Classifier</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="card">
+    <h1>Wine Cultivar Classifier</h1>
+    <p class="sub">Enter four lab measurements of a wine sample to predict which of three grape cultivars it came from.</p>
+
+    <form id="wine-form">
+      <label>Alcohol (%)<input name="alcohol" type="number" step="any" value="13.2" required></label>
+      <label>Flavanoids<input name="flavanoids" type="number" step="any" value="2.8" required></label>
+      <label>Color intensity<input name="color_intensity" type="number" step="any" value="5.6" required></label>
+      <label>Proline<input name="proline" type="number" step="any" value="1050" required></label>
+      <button type="submit">Predict</button>
+    </form>
+
+    <div id="result" class="result hidden"></div>
+  </main>
+
+  <script>
+    document.getElementById("wine-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const box = document.getElementById("result");
+      const res = await fetch("/predict", { method: "POST", body: new FormData(e.target) });
+      const data = await res.json();
+      box.classList.remove("hidden");
+      if (!res.ok) { box.textContent = data.error; return; }
+      const rows = Object.entries(data.probabilities)
+        .map(([k, v]) => `<li>${k}: ${(v * 100).toFixed(1)}%</li>`).join("");
+      box.innerHTML = `<strong>${data.predicted_cultivar}</strong> (${(data.confidence * 100).toFixed(1)}% confidence)<ul>${rows}</ul>`;
+    });
+  </script>
+</body>
+</html>

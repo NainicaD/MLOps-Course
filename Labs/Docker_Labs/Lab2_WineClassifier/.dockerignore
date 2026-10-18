@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.joblib
+.venv/
+venv/
+.DS_Store
+.git
