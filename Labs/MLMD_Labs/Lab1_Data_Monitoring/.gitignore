@@ -1,0 +1,7 @@
+.venv/
+raw/
+data/
+artifacts/
+metadata/
+__pycache__/
+.ipynb_checkpoints/
