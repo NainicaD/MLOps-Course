@@ -1,0 +1,7 @@
+tests/
+sample_data/
+screenshots/
+README.md
+.gitignore
+__pycache__/
+.pytest_cache/
