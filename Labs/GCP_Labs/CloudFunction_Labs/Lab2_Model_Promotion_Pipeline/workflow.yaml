@@ -1,0 +1,107 @@
+# Orchestrates one retraining run end to end:
+#   1. clear any old record for this run
+#   2. copy the batch from incoming/ into the raw bucket (this fires the pipeline)
+#   3. poll the serving function until the run is decided
+#   4. smoke-test the model that is now being served
+main:
+  params: [input]
+  steps:
+    - init:
+        assign:
+          - file: ${input.file}
+          - run_id: ${text.replace_all(file, ".csv", "")}
+          - raw_bucket: ${sys.get_env("RAW_BUCKET")}
+          - artifact_bucket: ${sys.get_env("ARTIFACT_BUCKET")}
+          - serving_url: ${sys.get_env("SERVING_URL")}
+          - attempts: 0
+          - max_attempts: 30
+          - poll_seconds: 10
+
+    - clear_old_record:
+        try:
+          call: googleapis.storage.v1.objects.delete
+          args:
+            bucket: ${artifact_bucket}
+            object: ${text.url_encode("registry/runs/" + run_id + ".json")}
+        except:
+          as: e
+          steps:
+            - ignore_if_missing:
+                switch:
+                  - condition: ${e.code == 404}
+                    next: start_run
+            - reraise:
+                raise: ${e}
+
+    - start_run:
+        call: googleapis.storage.v1.objects.copy
+        args:
+          sourceBucket: ${artifact_bucket}
+          sourceObject: ${text.url_encode("incoming/" + file)}
+          destinationBucket: ${raw_bucket}
+          destinationObject: ${text.url_encode(file)}
+
+    - poll_run:
+        call: http.get
+        args:
+          url: ${serving_url}
+          query:
+            run_id: ${run_id}
+          auth:
+            type: OIDC
+            audience: ${serving_url}
+        result: run_resp
+
+    - check_run:
+        switch:
+          - condition: ${run_resp.body.status == "FAILED"}
+            next: run_failed
+          - condition: ${run_resp.body.status != "pending"}
+            next: smoke_test
+          - condition: ${attempts >= max_attempts}
+            next: timed_out
+
+    - count_attempt:
+        assign:
+          - attempts: ${attempts + 1}
+
+    - wait:
+        call: sys.sleep
+        args:
+          seconds: ${poll_seconds}
+        next: poll_run
+
+    - smoke_test:
+        call: http.post
+        args:
+          url: ${serving_url}
+          auth:
+            type: OIDC
+            audience: ${serving_url}
+          body:
+            instances:
+              - season: 2
+                temp: 0.5
+                humidity: 0.6
+                windspeed: 0.2
+                workingday: 1
+        result: smoke
+
+    - finish:
+        return:
+          run_id: ${run_id}
+          status: ${run_resp.body.status}
+          reason: ${run_resp.body.reason}
+          challenger_mae: ${run_resp.body.challenger_mae}
+          serving_model: ${smoke.body.model_run_id}
+          smoke_test_prediction: ${smoke.body.predictions[0]}
+          seconds_waited: ${attempts * poll_seconds}
+
+    - run_failed:
+        return:
+          run_id: ${run_id}
+          status: FAILED
+          reason: ${run_resp.body.reason}
+
+    - timed_out:
+        raise: ${"Timed out waiting for run " + run_id}
